@@ -1,0 +1,15 @@
+spring:
+  application:
+    name: worker-app
+  main:
+    web-application-type: none
+  temporal:
+    namespace: ${TEMPORAL_NAMESPACE:default}
+    connection:
+      target: ${TEMPORAL_ADDRESS:127.0.0.1:7233}
+    workers:
+      - task-queue: ${TEMPORAL_TASK_QUEUE:issuance-dev}
+        workflow-classes:
+          - com.occlet.issuance.workflows.HelloWorkflowImpl
+        activity-beans:
+          - helloActivities

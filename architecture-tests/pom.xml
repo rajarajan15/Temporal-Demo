@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>com.occlet.issuance</groupId>
+    <artifactId>card-issuance</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+  </parent>
+  <artifactId>architecture-tests</artifactId>
+  <dependencies>
+    <dependency><groupId>com.occlet.issuance</groupId><artifactId>contracts</artifactId></dependency>
+    <dependency><groupId>com.occlet.issuance</groupId><artifactId>ports</artifactId></dependency>
+    <dependency><groupId>com.occlet.issuance</groupId><artifactId>engine-core</artifactId></dependency>
+    <dependency><groupId>com.occlet.issuance</groupId><artifactId>activities-api</artifactId></dependency>
+    <dependency><groupId>com.occlet.issuance</groupId><artifactId>activities</artifactId></dependency>
+    <dependency><groupId>com.occlet.issuance</groupId><artifactId>workflows</artifactId></dependency>
+    <dependency><groupId>com.occlet.issuance</groupId><artifactId>adapters-http</artifactId></dependency>
+    <dependency><groupId>com.occlet.issuance</groupId><artifactId>mock-services</artifactId></dependency>
+    <dependency><groupId>com.occlet.issuance</groupId><artifactId>worker-app</artifactId></dependency>
+    <dependency><groupId>com.occlet.issuance</groupId><artifactId>api-app</artifactId></dependency>
+    <dependency><groupId>io.temporal</groupId><artifactId>temporal-testing</artifactId><scope>test</scope></dependency>
+    <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId><scope>test</scope></dependency>
+    <dependency><groupId>com.tngtech.archunit</groupId><artifactId>archunit-junit5</artifactId><scope>test</scope></dependency>
+    <dependency><groupId>ch.qos.logback</groupId><artifactId>logback-classic</artifactId><scope>test</scope></dependency>
+  </dependencies>
+
+</project>

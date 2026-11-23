@@ -1,0 +1,25 @@
+# Local toolchain (JDK, Maven, Temporal CLI)
+.tools/
+
+# Build output
+target/
+
+# Node
+node_modules/
+web/dist/
+
+# Local Temporal dev server database
+*.db
+*.db-shm
+*.db-wal
+
+# IDE and OS
+.idea/
+*.iml
+.vscode/
+.DS_Store
+
+# Secrets
+.env
+.env.*
+.claude/settings.local.json
