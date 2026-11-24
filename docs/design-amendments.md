@@ -29,3 +29,34 @@ Where this file and the reference document disagree, this file wins.
 |---|---|---|---|---|
 | A11 | 6, 15 | A plain 13 to 19 digit match flags millisecond timestamps. | The data-leak scanner also requires a valid Luhn check digit, and scans payloads before encryption. | M1 |
 | A12 | 11, 14 | Activities waiting in retry backoff hold no worker slot, so failing calls alone may not raise queue latency. | The noisy-tenant demo uses slow failing calls and enough load to fill tenant A's worker slots. | M8 |
+
+## Temporary behaviour until a later milestone
+
+| Behaviour now | Final behaviour | Replaced in |
+|---|---|---|
+| A step that exhausts its retries is compensated and ends `CANCELLED` with `RETRIES_EXHAUSTED`. | The request is parked for an operator to retry or cancel (section 9). | M3 |
+| KYC "needs review" ends `UNDER_REVIEW` with `KYC_NEEDS_REVIEW`. | The workflow waits for a manual review decision. | M3 |
+| The processor confirmation wait (virtual step 4) is skipped. | A signal with a timeout timer. | M3 |
+| Products and the spend limit cap are fixed in code. | They come from tenant configuration passed as workflow input. | M6 |
+| Retry attempt counts appear only in the Temporal Web UI. | The progress view also shows them. | M7 |
+| `OFFLINE` mock mode returns 503 rather than refusing connections. | Unchanged. Both are classed as technical failures. | - |
+
+## Implementation notes
+
+- With `continueWithError`, the Java SDK `Saga` runs every compensation but does not report a failed one. `StepRunner` tracks compensation failures itself and ends the request `UNDER_REVIEW` with `COMPENSATION_FAILED`.
+
+## Platform versions
+
+Section 2 specified Java 21 and Spring Boot 3.x. The project now uses the latest stable release of each tool and direct dependency (decided Nov 24, 2026).
+
+| Item | Design | Now |
+|---|---|---|
+| Java | 21 | 25 (Temurin 25.0.5.1, LTS) |
+| Spring Boot | 3.x | 4.2.0 |
+| Maven | not specified | 3.10.2 (Maven 4 has no final release yet) |
+| Temporal SDK and starter | not specified | 1.41.1 |
+| Temporal CLI | not specified | 1.10.1 |
+
+Libraries that Spring Boot manages, such as JUnit, Logback and Jackson, follow the Boot 4.2.0 BOM rather than their own newest releases, so they stay a combination Spring has tested together.
+
+The Temporal Spring Boot starter is built against Spring Boot 2.7 and does not state Spring Boot 4 support. Each upgrade of either must pass the live scenario suite, not only the unit tests, because the unit tests do not load Spring.

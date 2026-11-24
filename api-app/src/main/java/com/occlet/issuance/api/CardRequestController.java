@@ -16,6 +16,10 @@ import io.temporal.client.WorkflowStub;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.regex.Pattern;
@@ -37,9 +41,12 @@ class CardRequestController {
     // Stops a card number being passed as a reference and entering workflow history.
     private static final Pattern LONG_DIGIT_RUN = Pattern.compile("\\d(?:[_-]?\\d){12,}");
 
+    private static final long QUERY_DEADLINE_SECONDS = 3;
+
     private final WorkflowClient client;
     private final String taskQueue;
     private final Set<String> tenants;
+    private final ExecutorService queries = Executors.newVirtualThreadPerTaskExecutor();
 
     CardRequestController(
             WorkflowClient client,
@@ -95,14 +102,26 @@ class CardRequestController {
         return read(tenant, id);
     }
 
+    /**
+     * A query needs a worker to answer it. With no worker, the call would wait for one, so it
+     * runs with a deadline and the caller gets a quick 503 instead of a hung request.
+     */
     private ResponseEntity<?> read(String tenant, String requestId) {
         WorkflowStub stub = client.newUntypedWorkflowStub(workflowId(tenant, requestId));
+        Future<CardProgress> query = queries.submit(() -> stub.query(WorkflowTypes.PROGRESS_QUERY, CardProgress.class));
         try {
-            return ResponseEntity.ok(stub.query(WorkflowTypes.PROGRESS_QUERY, CardProgress.class));
-        } catch (WorkflowNotFoundException notFound) {
-            return error(HttpStatus.NOT_FOUND, "NOT_FOUND");
-        } catch (WorkflowException queryFailed) {
+            return ResponseEntity.ok(query.get(QUERY_DEADLINE_SECONDS, TimeUnit.SECONDS));
+        } catch (ExecutionException failed) {
+            if (failed.getCause() instanceof WorkflowNotFoundException) {
+                return error(HttpStatus.NOT_FOUND, "NOT_FOUND");
+            }
             return finishedResult(stub);
+        } catch (TimeoutException noWorkerAnswered) {
+            query.cancel(true);
+            return finishedResult(stub);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            return progressUnavailable();
         }
     }
 
@@ -112,10 +131,14 @@ class CardRequestController {
             WorkflowOutcome outcome = stub.getResult(1, TimeUnit.SECONDS, WorkflowOutcome.class);
             return ResponseEntity.ok(new CardProgress(outcome.status(), outcome.reasonCode(), outcome.card(), List.of()));
         } catch (TimeoutException | WorkflowException unavailable) {
-            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
-                    .header("Retry-After", "5")
-                    .body(Map.of("code", "PROGRESS_UNAVAILABLE"));
+            return progressUnavailable();
         }
+    }
+
+    private static ResponseEntity<Map<String, String>> progressUnavailable() {
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .header("Retry-After", "5")
+                .body(Map.of("code", "PROGRESS_UNAVAILABLE"));
     }
 
     private static String workflowId(String tenant, String requestId) {

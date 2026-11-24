@@ -1,3 +1,9 @@
+issuance:
+  mocks:
+    base-url: ${MOCK_BASE_URL:http://127.0.0.1:8091}
+    # Must stay below the activity start-to-close timeout of 5 seconds.
+    request-timeout: 3s
+
 spring:
   application:
     name: worker-app
@@ -11,5 +17,7 @@ spring:
       - task-queue: ${TEMPORAL_TASK_QUEUE:issuance-dev}
         workflow-classes:
           - com.occlet.issuance.workflows.HelloWorkflowImpl
+          - com.occlet.issuance.workflows.VirtualCardWorkflowImpl
         activity-beans:
           - helloActivities
+          - cardActivities
