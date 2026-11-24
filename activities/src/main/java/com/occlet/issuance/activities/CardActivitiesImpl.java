@@ -2,6 +2,7 @@ package com.occlet.issuance.activities;
 
 import com.occlet.issuance.activities.api.CardActivities;
 import com.occlet.issuance.activities.api.CardCommand;
+import com.occlet.issuance.activities.api.LinkCommand;
 import com.occlet.issuance.activities.api.NotificationCommand;
 import com.occlet.issuance.activities.api.RequestScope;
 import com.occlet.issuance.activities.api.SetLimitsCommand;
@@ -93,6 +94,18 @@ public class CardActivitiesImpl implements CardActivities {
     public void sendNotification(NotificationCommand command) {
         String key = IdempotencyKeys.of(command.scope(), StepNames.SEND_NOTIFICATION);
         FailureMapper.run(() -> notifications.send(key, command.template(), command.customerRef()));
+    }
+
+    @Override
+    public void blockCard(CardCommand command) {
+        String key = IdempotencyKeys.of(command.scope(), StepNames.BLOCK_OLD_CARD);
+        FailureMapper.run(() -> processor.block(key, command.cardId()));
+    }
+
+    @Override
+    public void linkReplacement(LinkCommand command) {
+        String key = IdempotencyKeys.of(command.scope(), StepNames.LINK_CARDS);
+        FailureMapper.run(() -> processor.linkReplacement(key, command.oldCardId(), command.newCardId()));
     }
 
     private static RequestScope scope(CardRequest request) {

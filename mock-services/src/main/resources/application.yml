@@ -10,3 +10,8 @@ spring:
 mock:
   # Must exceed the worker's HTTP timeout, so DROP_RESPONSE looks like a lost response.
   drop-response-delay-ms: 4000
+  callbacks:
+    target-url: ${MOCK_CALLBACK_URL:http://127.0.0.1:8080/v1/webhooks/processor}
+    # Development-only shared secret. Must match the API's issuance.webhooks.secret.
+    secret: ${WEBHOOK_SECRET:dev-webhook-secret}
+    default-delay-ms: 200

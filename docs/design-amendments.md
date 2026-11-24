@@ -34,16 +34,30 @@ Where this file and the reference document disagree, this file wins.
 
 | Behaviour now | Final behaviour | Replaced in |
 |---|---|---|
-| A step that exhausts its retries is compensated and ends `CANCELLED` with `RETRIES_EXHAUSTED`. | The request is parked for an operator to retry or cancel (section 9). | M3 |
-| KYC "needs review" ends `UNDER_REVIEW` with `KYC_NEEDS_REVIEW`. | The workflow waits for a manual review decision. | M3 |
-| The processor confirmation wait (virtual step 4) is skipped. | A signal with a timeout timer. | M3 |
-| Products and the spend limit cap are fixed in code. | They come from tenant configuration passed as workflow input. | M6 |
+| Products and the spend limit cap are fixed in code. Only the confirmation timeout comes from tenant settings. | All tenant configuration is passed as workflow input. | M6 |
 | Retry attempt counts appear only in the Temporal Web UI. | The progress view also shows them. | M7 |
+| Platform records for reconciliation come from Temporal visibility (each workflow's `CardId` and `CardStatus`). | They come from the card service, which owns card status. | When the card service exists |
+| Reconciliation compares every card, not only one day's records. | The processor returns daily records for the business date. | When the processor supports it |
 | `OFFLINE` mock mode returns 503 rather than refusing connections. | Unchanged. Both are classed as technical failures. | - |
+
+Milestone 3 replaced the three Milestone 2 temporary behaviours: retries running out now parks for an operator, KYC "needs review" waits for a decision, and the processor confirmation wait is a signal raced against a timer.
+
+## Milestone 3 scope
+
+The original section 17 order is kept, except that two items move earlier so Milestone 3 covers every Temporal pattern without the physical card:
+
+- **Reconciliation, schedule and heartbeats** (from M8). The heartbeating activity shows resume-after-crash, which the design otherwise demonstrates with physical card personalization in M4.
+- **Reissue for virtual cards** (from M4). Physical reissue follows with the physical card.
 
 ## Implementation notes
 
 - With `continueWithError`, the Java SDK `Saga` runs every compensation but does not report a failed one. `StepRunner` tracks compensation failures itself and ends the request `UNDER_REVIEW` with `COMPENSATION_FAILED`.
+- An accepted cancel always takes effect, even if it raced a step. The workflow checks for it after each step, including after activation, and only then marks the point of no return.
+- The SDK sends at most one heartbeat per 80% of the heartbeat timeout (4 of 5 seconds). A resumed reconciliation can therefore re-read up to about 4 seconds of pages, which is safe because reads have no side effects.
+- Webhook routing uses the request ID carried in the callback (A5), so a callback that arrives before the workflow records the card ID is kept and applied when the wait starts.
+- Operator decisions and cancellation accept an optional `Idempotency-Key`, which becomes the Temporal update ID. An update that times out with `503` may still be applied once a worker is back, so a retry with the same key returns the original result instead of `409 NO_REVIEW_PENDING`.
+- Reconciliation heartbeats before and after loading platform records, as well as after each page. The first heartbeat uses the SDK's immediate send, so page progress reaches Temporal up to 4 seconds later.
+- Known limitation: reissuing the same card twice with different keys issues two replacements. Preventing it needs the card service's view of the old card.
 
 ## Platform versions
 

@@ -2,6 +2,7 @@ package com.occlet.issuance.mock;
 
 import java.util.List;
 import java.util.Map;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -17,10 +18,12 @@ import org.springframework.web.bind.annotation.RestController;
 class MockAdminController {
     private final MockGate gate;
     private final ProcessorStore store;
+    private final CallbackSender callbacks;
 
-    MockAdminController(MockGate gate, ProcessorStore store) {
+    MockAdminController(MockGate gate, ProcessorStore store, CallbackSender callbacks) {
         this.gate = gate;
         this.store = store;
+        this.callbacks = callbacks;
     }
 
     @PutMapping("/failures/{tenant}/{mock}/{operation}")
@@ -30,10 +33,24 @@ class MockAdminController {
         return ResponseEntity.noContent().build();
     }
 
+    /** How the processor delivers confirmation callbacks for a tenant: NORMAL, DELAY, DUPLICATE or NEVER. */
+    @PutMapping("/callbacks/{tenant}")
+    ResponseEntity<Void> setCallbacks(@PathVariable String tenant, @RequestBody CallbackSender.CallbackRule rule) {
+        callbacks.setRule(tenant, rule);
+        return ResponseEntity.noContent().build();
+    }
+
+    /** Creates an active card at the processor that the platform never issued. */
+    @PostMapping("/cards/{tenant}/orphan")
+    ResponseEntity<ProcessorStore.Created> orphan(@PathVariable String tenant) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(store.createOrphan(tenant));
+    }
+
     @PostMapping("/reset")
     ResponseEntity<Void> reset() {
         gate.reset();
         store.reset();
+        callbacks.reset();
         return ResponseEntity.noContent().build();
     }
 

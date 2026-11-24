@@ -18,6 +18,9 @@ spring:
         workflow-classes:
           - com.occlet.issuance.workflows.HelloWorkflowImpl
           - com.occlet.issuance.workflows.VirtualCardWorkflowImpl
+          - com.occlet.issuance.workflows.ReissueWorkflowImpl
+          - com.occlet.issuance.workflows.ReconciliationWorkflowImpl
         activity-beans:
           - helloActivities
           - cardActivities
+          - reconciliationActivities

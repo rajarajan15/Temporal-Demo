@@ -19,4 +19,11 @@ public interface CardProcessorPort {
     void activate(String idempotencyKey, String cardId);
 
     void deactivate(String idempotencyKey, String cardId);
+
+    void block(String idempotencyKey, String cardId);
+
+    void linkReplacement(String idempotencyKey, String oldCardId, String newCardId);
+
+    /** Pages through a tenant's cards in card ID order, starting after the given card ID. */
+    CardPage listCards(String tenantId, String afterCardId, int pageSize);
 }

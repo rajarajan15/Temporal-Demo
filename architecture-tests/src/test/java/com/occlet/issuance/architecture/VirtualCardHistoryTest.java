@@ -17,7 +17,11 @@ import com.occlet.issuance.ports.PortException;
 import com.occlet.issuance.workflows.VirtualCardWorkflow;
 import com.occlet.issuance.workflows.VirtualCardWorkflowImpl;
 import io.temporal.api.enums.v1.IndexedValueType;
+import com.occlet.issuance.contracts.ProcessorEvent;
+import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowOptions;
+import io.temporal.client.WorkflowStub;
+import java.time.Duration;
 import io.temporal.common.WorkflowExecutionHistory;
 import io.temporal.testing.TestWorkflowEnvironment;
 import io.temporal.testing.WorkflowReplayer;
@@ -63,6 +67,19 @@ class VirtualCardHistoryTest {
         verify("saga");
     }
 
+    /** Timer fires, the request parks, then a late callback clears it: timers and signals must replay too. */
+    @Test
+    void parkedThenLateCallbackHistoryReplays() throws Exception {
+        VirtualCardWorkflow workflow = start("late");
+        for (int i = 0; i < 60 && workflow.progress().pendingReview() == null; i++) {
+            env.sleep(Duration.ofSeconds(5));
+        }
+        WorkflowStub stub = WorkflowStub.fromTyped(workflow);
+        stub.signal("processorEvent", new ProcessorEvent("evt-late", "card_ABC", ProcessorEvent.CARD_CREATED));
+        assertEquals(CardStatus.ACTIVE, stub.getResult(WorkflowOutcome.class).status());
+        verify("late");
+    }
+
     private void verify(String id) throws Exception {
         WorkflowExecutionHistory history = env.getWorkflowClient().fetchHistory(id);
         assertTrue(CardNumberScanner.findCardNumbers(history.getHistory().toString()).isEmpty());
@@ -70,12 +87,21 @@ class VirtualCardHistoryTest {
     }
 
     private WorkflowOutcome issue(String id) {
+        VirtualCardWorkflow workflow = start(id);
+        WorkflowStub stub = WorkflowStub.fromTyped(workflow);
+        stub.signal("processorEvent", new ProcessorEvent("evt-" + id, "card_ABC", ProcessorEvent.CARD_CREATED));
+        return stub.getResult(WorkflowOutcome.class);
+    }
+
+    private VirtualCardWorkflow start(String id) {
         CardRequest request = new CardRequest(id, "bank-a", CardType.VIRTUAL, "VIRTUAL_STANDARD", "customer", "account", 50_000);
-        return env.getWorkflowClient().newWorkflowStub(VirtualCardWorkflow.class, WorkflowOptions.newBuilder()
+        VirtualCardWorkflow workflow = env.getWorkflowClient().newWorkflowStub(VirtualCardWorkflow.class, WorkflowOptions.newBuilder()
                 .setWorkflowId(id)
                 .setTaskQueue(QUEUE)
                 .setTypedSearchAttributes(CardSearchAttributes.initial(request))
-                .build()).issue(request);
+                .build());
+        WorkflowClient.start(workflow::issue, request);
+        return workflow;
     }
 
     private final class Processor implements CardProcessorPort {
@@ -89,5 +115,8 @@ class VirtualCardHistoryTest {
             }
         }
         @Override public void deactivate(String key, String cardId) { }
+        @Override public void block(String key, String cardId) { }
+        @Override public void linkReplacement(String key, String oldCardId, String newCardId) { }
+        @Override public com.occlet.issuance.ports.CardPage listCards(String tenantId, String after, int pageSize) { return new com.occlet.issuance.ports.CardPage(java.util.List.of(), null); }
     }
 }

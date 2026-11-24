@@ -1,9 +1,17 @@
 server:
   port: ${API_PORT:8080}
 
+# Tenant registry. Settings here are passed into workflows as input.
 issuance:
   task-queue: ${TEMPORAL_TASK_QUEUE:issuance-dev}
-  tenants: bank-a,bank-b
+  tenants:
+    "[bank-a]":
+      confirmation-timeout-seconds: ${CONFIRMATION_TIMEOUT_SECONDS:10}
+    "[bank-b]":
+      confirmation-timeout-seconds: ${CONFIRMATION_TIMEOUT_SECONDS:10}
+  webhooks:
+    # Development-only shared secret. Must match the mock's mock.callbacks.secret.
+    secret: ${WEBHOOK_SECRET:dev-webhook-secret}
 
 spring:
   application:

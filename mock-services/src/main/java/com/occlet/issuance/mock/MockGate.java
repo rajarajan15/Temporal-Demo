@@ -70,6 +70,31 @@ public class MockGate {
         return result;
     }
 
+    /** Reads apply failure injection but are never cached, so every page reflects current data. */
+    public <T> T read(String mock, String operation, String tenant, Supplier<T> work) {
+        String endpoint = endpoint(tenant, mock, operation);
+        FailureRule rule;
+        synchronized (this) {
+            calls.merge(endpoint, 1, Integer::sum);
+            rule = consumeRule(endpoint);
+        }
+        if (rule != null) {
+            switch (rule.mode()) {
+                case OFFLINE -> throw new MockException(HttpStatus.SERVICE_UNAVAILABLE, "OFFLINE");
+                case SERVER_ERROR -> throw new MockException(HttpStatus.INTERNAL_SERVER_ERROR, "SERVER_ERROR");
+                case BUSINESS_ERROR -> throw new MockException(
+                        HttpStatus.UNPROCESSABLE_ENTITY, rule.code() == null ? "BUSINESS_ERROR" : rule.code());
+                case LATENCY -> pause(rule.latencyMs() == null ? 0 : rule.latencyMs());
+                case DROP_RESPONSE -> { }
+            }
+        }
+        T result = work.get();
+        if (rule != null && rule.mode() == FailureRule.Mode.DROP_RESPONSE) {
+            pause(dropResponseDelayMs);
+        }
+        return result;
+    }
+
     public synchronized void setRule(String tenant, String mock, String operation, FailureRule rule) {
         String endpoint = endpoint(tenant, mock, operation);
         rules.put(endpoint, rule);

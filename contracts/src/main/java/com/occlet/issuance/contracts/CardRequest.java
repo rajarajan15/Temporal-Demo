@@ -8,4 +8,11 @@ public record CardRequest(
         String productCode,
         String customerRef,
         String accountRef,
-        long spendLimitMinor) {}
+        long spendLimitMinor,
+        TenantSettings settings) {
+
+    public CardRequest(String requestId, String tenantId, CardType cardType, String productCode,
+            String customerRef, String accountRef, long spendLimitMinor) {
+        this(requestId, tenantId, cardType, productCode, customerRef, accountRef, spendLimitMinor, null);
+    }
+}
