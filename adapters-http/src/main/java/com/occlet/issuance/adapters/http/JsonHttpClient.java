@@ -33,12 +33,28 @@ public final class JsonHttpClient {
 
     JsonNode post(String path, String idempotencyKey, Map<String, ?> body) {
         try {
-            HttpRequest request = HttpRequest.newBuilder(URI.create(baseUrl + path))
+            return send(HttpRequest.newBuilder(URI.create(baseUrl + path))
                     .timeout(requestTimeout)
                     .header("Content-Type", "application/json")
                     .header("Idempotency-Key", idempotencyKey)
                     .POST(HttpRequest.BodyPublishers.ofString(JSON.writeValueAsString(body)))
-                    .build();
+                    .build());
+        } catch (IOException e) {
+            throw new PortException.Technical("REQUEST_NOT_SERIALIZABLE");
+        }
+    }
+
+    /** Reads are safe to repeat, so they carry no idempotency key. */
+    JsonNode get(String pathAndQuery, String tenantId) {
+        return send(HttpRequest.newBuilder(URI.create(baseUrl + pathAndQuery))
+                .timeout(requestTimeout)
+                .header("X-Tenant-Id", tenantId)
+                .GET()
+                .build());
+    }
+
+    private JsonNode send(HttpRequest request) {
+        try {
             HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
             return handle(response.statusCode(), response.body());
         } catch (ConnectException | HttpConnectTimeoutException e) {

@@ -110,5 +110,8 @@ class CardActivitiesImplTest {
         @Override public void resetLimits(String key, String cardId) { }
         @Override public void activate(String key, String cardId) { }
         @Override public void deactivate(String key, String cardId) { }
+        @Override public void block(String key, String cardId) { }
+        @Override public void linkReplacement(String key, String oldCardId, String newCardId) { }
+        @Override public com.occlet.issuance.ports.CardPage listCards(String tenantId, String after, int pageSize) { return new com.occlet.issuance.ports.CardPage(java.util.List.of(), null); }
     }
 }

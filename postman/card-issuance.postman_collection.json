@@ -1,0 +1,3954 @@
+{
+  "info": {
+    "name": "Temporal Card Issuance",
+    "description": "Milestones 1 to 3. Start Temporal, mocks, worker and API, then run this collection in the Collection Runner, deselecting folder 9. Polling requests repeat once a second until the workflow is ready. A full run takes about 2 minutes.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "mockUrl",
+      "value": "http://localhost:8091"
+    },
+    {
+      "key": "tenant",
+      "value": "bank-a"
+    },
+    {
+      "key": "otherTenant",
+      "value": "bank-b"
+    },
+    {
+      "key": "run",
+      "value": ""
+    },
+    {
+      "key": "tries",
+      "value": "0"
+    }
+  ],
+  "item": [
+    {
+      "name": "0 Setup",
+      "description": "Starts a new run. Every request key includes the run ID, so the collection can be run repeatedly.",
+      "item": [
+        {
+          "name": "Start run and reset mocks",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('run', 'pm' + Date.now().toString(36));",
+                  "pm.collectionVariables.set('tries', 0);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 204', () => pm.response.to.have.status(204));",
+                  "console.log('Run ID: ' + pm.collectionVariables.get('run'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{mockUrl}}/mock-admin/reset"
+          }
+        }
+      ]
+    },
+    {
+      "name": "1 Milestone 1",
+      "description": "The sample workflow.",
+      "item": [
+        {
+          "name": "M1 Hello workflow",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('greeting', () => pm.expect(pm.response.json().greeting).to.eql('Hello, Ada!'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/hello",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requestId\": \"{{run}}-hello\",\n  \"name\": \"Ada\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2 Milestone 2",
+      "description": "Virtual card issuance, retries, idempotency and compensation.",
+      "item": [
+        {
+          "name": "tc01 Create card",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));",
+                  "pm.test('status REQUESTED', () => pm.expect(pm.response.json().status).to.eql('REQUESTED'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{run}}-tc01"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cardType\": \"VIRTUAL\",\n  \"productCode\": \"VIRTUAL_STANDARD\",\n  \"customerRef\": \"customer-1\",\n  \"accountRef\": \"account-1\",\n  \"spendLimitMinor\": 50000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "tc01 Progress",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (Number(pm.collectionVariables.get('tries') || 0) > 0) {",
+                  "  setTimeout(() => {}, 1000);",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const next = (n) => (pm.execution && pm.execution.setNextRequest) ? pm.execution.setNextRequest(n) : postman.setNextRequest(n);",
+                  "const code = pm.response.code;",
+                  "let b = {};",
+                  "try { b = pm.response.json(); } catch (e) { }",
+                  "const step = (n) => (b.steps || []).find((s) => s.name === n) || {};",
+                  "const tries = Number(pm.collectionVariables.get('tries') || 0);",
+                  "const ready = code === 200 && b.finished === true;",
+                  "if (!ready && tries < 45) {",
+                  "  pm.collectionVariables.set('tries', tries + 1);",
+                  "  next(pm.info.requestName);",
+                  "} else {",
+                  "  pm.collectionVariables.set('tries', 0);",
+                  "  pm.test('reached the expected state within 45 seconds', () => pm.expect(ready).to.be.true);",
+                  "  pm.test('status is ACTIVE', () => pm.expect(b.status).to.eql('ACTIVE'));",
+                  "  pm.test('reasonCode is null', () => pm.expect(b.reasonCode).to.eql(null));",
+                  "  pm.test('all 7 steps DONE', () => pm.expect((b.steps || []).filter((s) => s.state === 'DONE').length).to.eql(7));",
+                  "  pm.test('card has ID and token', () => { pm.expect(b.card.cardId).to.be.a('string'); pm.expect(b.card.token).to.be.a('string'); });",
+                  "  pm.collectionVariables.set('tc01CardId', b.card ? b.card.cardId : '');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests/{{run}}-tc01"
+          }
+        },
+        {
+          "name": "tc01 Mock card is active with limit",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const cards = pm.response.json();",
+                  "",
+                  "const card = cards.find((c) => c.cardId === pm.collectionVariables.get('tc01CardId'));",
+                  "pm.test('card ACTIVE', () => pm.expect(card.status).to.eql('ACTIVE'));",
+                  "pm.test('limit 50000', () => pm.expect(card.limitMinor).to.eql(50000));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{mockUrl}}/mock-admin/cards/{{tenant}}"
+          }
+        },
+        {
+          "name": "tc02 Duplicate request returns existing",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('existing request', () => pm.expect(pm.response.json().status).to.eql('ACTIVE'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{run}}-tc01"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cardType\": \"VIRTUAL\",\n  \"productCode\": \"VIRTUAL_STANDARD\",\n  \"customerRef\": \"customer-1\",\n  \"accountRef\": \"account-1\",\n  \"spendLimitMinor\": 50000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "tc03 Other tenant gets 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 404', () => pm.response.to.have.status(404));",
+                  "pm.test('code is NOT_FOUND', () => pm.expect(pm.response.json().code).to.eql('NOT_FOUND'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{otherTenant}}"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests/{{run}}-tc01"
+          }
+        },
+        {
+          "name": "tc04 Card number as input is refused",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('code is INVALID_REQUEST', () => pm.expect(pm.response.json().code).to.eql('INVALID_REQUEST'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{run}}-tc04"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cardType\": \"VIRTUAL\",\n  \"productCode\": \"VIRTUAL_STANDARD\",\n  \"customerRef\": \"4111111111111111\",\n  \"accountRef\": \"account-1\",\n  \"spendLimitMinor\": 50000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "tc05 Create with unknown product",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{run}}-tc05"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cardType\": \"VIRTUAL\",\n  \"productCode\": \"GOLD\",\n  \"customerRef\": \"customer-1\",\n  \"accountRef\": \"account-1\",\n  \"spendLimitMinor\": 50000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "tc05 Progress",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (Number(pm.collectionVariables.get('tries') || 0) > 0) {",
+                  "  setTimeout(() => {}, 1000);",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const next = (n) => (pm.execution && pm.execution.setNextRequest) ? pm.execution.setNextRequest(n) : postman.setNextRequest(n);",
+                  "const code = pm.response.code;",
+                  "let b = {};",
+                  "try { b = pm.response.json(); } catch (e) { }",
+                  "const step = (n) => (b.steps || []).find((s) => s.name === n) || {};",
+                  "const tries = Number(pm.collectionVariables.get('tries') || 0);",
+                  "const ready = code === 200 && b.finished === true;",
+                  "if (!ready && tries < 45) {",
+                  "  pm.collectionVariables.set('tries', tries + 1);",
+                  "  next(pm.info.requestName);",
+                  "} else {",
+                  "  pm.collectionVariables.set('tries', 0);",
+                  "  pm.test('reached the expected state within 45 seconds', () => pm.expect(ready).to.be.true);",
+                  "  pm.test('status is REJECTED', () => pm.expect(b.status).to.eql('REJECTED'));",
+                  "  pm.test('reasonCode is INVALID_PRODUCT', () => pm.expect(b.reasonCode).to.eql('INVALID_PRODUCT'));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests/{{run}}-tc05"
+          }
+        },
+        {
+          "name": "tc06 Create with limit above policy",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{run}}-tc06"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cardType\": \"VIRTUAL\",\n  \"productCode\": \"VIRTUAL_STANDARD\",\n  \"customerRef\": \"customer-1\",\n  \"accountRef\": \"account-1\",\n  \"spendLimitMinor\": 2000000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "tc06 Progress",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (Number(pm.collectionVariables.get('tries') || 0) > 0) {",
+                  "  setTimeout(() => {}, 1000);",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const next = (n) => (pm.execution && pm.execution.setNextRequest) ? pm.execution.setNextRequest(n) : postman.setNextRequest(n);",
+                  "const code = pm.response.code;",
+                  "let b = {};",
+                  "try { b = pm.response.json(); } catch (e) { }",
+                  "const step = (n) => (b.steps || []).find((s) => s.name === n) || {};",
+                  "const tries = Number(pm.collectionVariables.get('tries') || 0);",
+                  "const ready = code === 200 && b.finished === true;",
+                  "if (!ready && tries < 45) {",
+                  "  pm.collectionVariables.set('tries', tries + 1);",
+                  "  next(pm.info.requestName);",
+                  "} else {",
+                  "  pm.collectionVariables.set('tries', 0);",
+                  "  pm.test('reached the expected state within 45 seconds', () => pm.expect(ready).to.be.true);",
+                  "  pm.test('status is REJECTED', () => pm.expect(b.status).to.eql('REJECTED'));",
+                  "  pm.test('reasonCode is LIMIT_EXCEEDS_POLICY', () => pm.expect(b.reasonCode).to.eql('LIMIT_EXCEEDS_POLICY'));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests/{{run}}-tc06"
+          }
+        },
+        {
+          "name": "tc07 Reset mocks",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{mockUrl}}/mock-admin/reset"
+          }
+        },
+        {
+          "name": "tc07 Create, KYC rejects",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{run}}-tc07"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cardType\": \"VIRTUAL\",\n  \"productCode\": \"VIRTUAL_STANDARD\",\n  \"customerRef\": \"reject-1\",\n  \"accountRef\": \"account-1\",\n  \"spendLimitMinor\": 50000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "tc07 Progress",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (Number(pm.collectionVariables.get('tries') || 0) > 0) {",
+                  "  setTimeout(() => {}, 1000);",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const next = (n) => (pm.execution && pm.execution.setNextRequest) ? pm.execution.setNextRequest(n) : postman.setNextRequest(n);",
+                  "const code = pm.response.code;",
+                  "let b = {};",
+                  "try { b = pm.response.json(); } catch (e) { }",
+                  "const step = (n) => (b.steps || []).find((s) => s.name === n) || {};",
+                  "const tries = Number(pm.collectionVariables.get('tries') || 0);",
+                  "const ready = code === 200 && b.finished === true;",
+                  "if (!ready && tries < 45) {",
+                  "  pm.collectionVariables.set('tries', tries + 1);",
+                  "  next(pm.info.requestName);",
+                  "} else {",
+                  "  pm.collectionVariables.set('tries', 0);",
+                  "  pm.test('reached the expected state within 45 seconds', () => pm.expect(ready).to.be.true);",
+                  "  pm.test('status is REJECTED', () => pm.expect(b.status).to.eql('REJECTED'));",
+                  "  pm.test('reasonCode is KYC_REJECTED', () => pm.expect(b.reasonCode).to.eql('KYC_REJECTED'));",
+                  "  pm.test('createCard never ran', () => pm.expect(step('createCard').state).to.eql('PENDING'));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests/{{run}}-tc07"
+          }
+        },
+        {
+          "name": "tc07 No card created",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const cards = pm.response.json();",
+                  "pm.test('no cards', () => pm.expect(cards.length).to.eql(0));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{mockUrl}}/mock-admin/cards/{{tenant}}"
+          }
+        },
+        {
+          "name": "tc09 Reset mocks",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{mockUrl}}/mock-admin/reset"
+          }
+        },
+        {
+          "name": "tc09 Processor fails the next 2 calls",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{mockUrl}}/mock-admin/failures/{{tenant}}/processor/createCard",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"mode\": \"SERVER_ERROR\",\n  \"times\": 2\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "tc09 Create card",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{run}}-tc09"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cardType\": \"VIRTUAL\",\n  \"productCode\": \"VIRTUAL_STANDARD\",\n  \"customerRef\": \"customer-1\",\n  \"accountRef\": \"account-1\",\n  \"spendLimitMinor\": 50000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "tc09 Progress",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (Number(pm.collectionVariables.get('tries') || 0) > 0) {",
+                  "  setTimeout(() => {}, 1000);",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const next = (n) => (pm.execution && pm.execution.setNextRequest) ? pm.execution.setNextRequest(n) : postman.setNextRequest(n);",
+                  "const code = pm.response.code;",
+                  "let b = {};",
+                  "try { b = pm.response.json(); } catch (e) { }",
+                  "const step = (n) => (b.steps || []).find((s) => s.name === n) || {};",
+                  "const tries = Number(pm.collectionVariables.get('tries') || 0);",
+                  "const ready = code === 200 && b.finished === true;",
+                  "if (!ready && tries < 45) {",
+                  "  pm.collectionVariables.set('tries', tries + 1);",
+                  "  next(pm.info.requestName);",
+                  "} else {",
+                  "  pm.collectionVariables.set('tries', 0);",
+                  "  pm.test('reached the expected state within 45 seconds', () => pm.expect(ready).to.be.true);",
+                  "  pm.test('status is ACTIVE', () => pm.expect(b.status).to.eql('ACTIVE'));",
+                  "  pm.test('reasonCode is null', () => pm.expect(b.reasonCode).to.eql(null));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests/{{run}}-tc09"
+          }
+        },
+        {
+          "name": "tc09 Three calls, one card",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const n = pm.response.json();",
+                  "",
+                  "pm.test('3 createCard calls', () => pm.expect(n.calls['processor/createCard']).to.eql(3));",
+                  "pm.test('1 side effect', () => pm.expect(n.sideEffects['processor/createCard']).to.eql(1));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{mockUrl}}/mock-admin/counters/{{tenant}}"
+          }
+        },
+        {
+          "name": "tc10 Reset mocks",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{mockUrl}}/mock-admin/reset"
+          }
+        },
+        {
+          "name": "tc10 Processor drops the next response",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{mockUrl}}/mock-admin/failures/{{tenant}}/processor/createCard",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"mode\": \"DROP_RESPONSE\",\n  \"times\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "tc10 Create card",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{run}}-tc10"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cardType\": \"VIRTUAL\",\n  \"productCode\": \"VIRTUAL_STANDARD\",\n  \"customerRef\": \"customer-1\",\n  \"accountRef\": \"account-1\",\n  \"spendLimitMinor\": 50000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "tc10 Progress",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (Number(pm.collectionVariables.get('tries') || 0) > 0) {",
+                  "  setTimeout(() => {}, 1000);",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const next = (n) => (pm.execution && pm.execution.setNextRequest) ? pm.execution.setNextRequest(n) : postman.setNextRequest(n);",
+                  "const code = pm.response.code;",
+                  "let b = {};",
+                  "try { b = pm.response.json(); } catch (e) { }",
+                  "const step = (n) => (b.steps || []).find((s) => s.name === n) || {};",
+                  "const tries = Number(pm.collectionVariables.get('tries') || 0);",
+                  "const ready = code === 200 && b.finished === true;",
+                  "if (!ready && tries < 45) {",
+                  "  pm.collectionVariables.set('tries', tries + 1);",
+                  "  next(pm.info.requestName);",
+                  "} else {",
+                  "  pm.collectionVariables.set('tries', 0);",
+                  "  pm.test('reached the expected state within 45 seconds', () => pm.expect(ready).to.be.true);",
+                  "  pm.test('status is ACTIVE', () => pm.expect(b.status).to.eql('ACTIVE'));",
+                  "  pm.test('reasonCode is null', () => pm.expect(b.reasonCode).to.eql(null));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests/{{run}}-tc10"
+          }
+        },
+        {
+          "name": "tc10 Retried, still one card",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const n = pm.response.json();",
+                  "",
+                  "pm.test('at least 2 createCard calls', () => pm.expect(n.calls['processor/createCard']).to.be.at.least(2));",
+                  "pm.test('1 side effect', () => pm.expect(n.sideEffects['processor/createCard']).to.eql(1));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{mockUrl}}/mock-admin/counters/{{tenant}}"
+          }
+        },
+        {
+          "name": "tc11 Reset mocks",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{mockUrl}}/mock-admin/reset"
+          }
+        },
+        {
+          "name": "tc11 Processor declines activation",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{mockUrl}}/mock-admin/failures/{{tenant}}/processor/activateCard",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"mode\": \"BUSINESS_ERROR\",\n  \"times\": -1,\n  \"code\": \"ACTIVATION_DECLINED\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "tc11 Create card",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{run}}-tc11"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cardType\": \"VIRTUAL\",\n  \"productCode\": \"VIRTUAL_STANDARD\",\n  \"customerRef\": \"customer-1\",\n  \"accountRef\": \"account-1\",\n  \"spendLimitMinor\": 50000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "tc11 Progress",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (Number(pm.collectionVariables.get('tries') || 0) > 0) {",
+                  "  setTimeout(() => {}, 1000);",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const next = (n) => (pm.execution && pm.execution.setNextRequest) ? pm.execution.setNextRequest(n) : postman.setNextRequest(n);",
+                  "const code = pm.response.code;",
+                  "let b = {};",
+                  "try { b = pm.response.json(); } catch (e) { }",
+                  "const step = (n) => (b.steps || []).find((s) => s.name === n) || {};",
+                  "const tries = Number(pm.collectionVariables.get('tries') || 0);",
+                  "const ready = code === 200 && b.finished === true;",
+                  "if (!ready && tries < 45) {",
+                  "  pm.collectionVariables.set('tries', tries + 1);",
+                  "  next(pm.info.requestName);",
+                  "} else {",
+                  "  pm.collectionVariables.set('tries', 0);",
+                  "  pm.test('reached the expected state within 45 seconds', () => pm.expect(ready).to.be.true);",
+                  "  pm.test('status is REJECTED', () => pm.expect(b.status).to.eql('REJECTED'));",
+                  "  pm.test('reasonCode is ACTIVATION_DECLINED', () => pm.expect(b.reasonCode).to.eql('ACTIVATION_DECLINED'));",
+                  "  pm.test('activateCard FAILED', () => pm.expect(step('activateCard').state).to.eql('FAILED'));",
+                  "  ['deactivateCard', 'resetLimits', 'cancelCard'].forEach((s) => pm.test(s + ' COMPENSATED', () => pm.expect(step(s).state).to.eql('COMPENSATED')));",
+                  "  const order = (b.steps || []).filter((s) => s.state === 'COMPENSATED').map((s) => s.name).join(',');",
+                  "  pm.test('compensated in reverse order', () => pm.expect(order).to.eql('deactivateCard,resetLimits,cancelCard'));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests/{{run}}-tc11"
+          }
+        },
+        {
+          "name": "tc11 Card cancelled and limit reset",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const cards = pm.response.json();",
+                  "",
+                  "pm.test('card CANCELLED', () => pm.expect(cards[0].status).to.eql('CANCELLED'));",
+                  "pm.test('limit 0', () => pm.expect(cards[0].limitMinor).to.eql(0));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{mockUrl}}/mock-admin/cards/{{tenant}}"
+          }
+        },
+        {
+          "name": "tc12 Reset mocks",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{mockUrl}}/mock-admin/reset"
+          }
+        },
+        {
+          "name": "tc12 Notification service offline",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{mockUrl}}/mock-admin/failures/{{tenant}}/notification/send",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"mode\": \"OFFLINE\",\n  \"times\": -1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "tc12 Create card",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{run}}-tc12"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cardType\": \"VIRTUAL\",\n  \"productCode\": \"VIRTUAL_STANDARD\",\n  \"customerRef\": \"customer-1\",\n  \"accountRef\": \"account-1\",\n  \"spendLimitMinor\": 50000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "tc12 Progress",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (Number(pm.collectionVariables.get('tries') || 0) > 0) {",
+                  "  setTimeout(() => {}, 1000);",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const next = (n) => (pm.execution && pm.execution.setNextRequest) ? pm.execution.setNextRequest(n) : postman.setNextRequest(n);",
+                  "const code = pm.response.code;",
+                  "let b = {};",
+                  "try { b = pm.response.json(); } catch (e) { }",
+                  "const step = (n) => (b.steps || []).find((s) => s.name === n) || {};",
+                  "const tries = Number(pm.collectionVariables.get('tries') || 0);",
+                  "const ready = code === 200 && b.finished === true;",
+                  "if (!ready && tries < 45) {",
+                  "  pm.collectionVariables.set('tries', tries + 1);",
+                  "  next(pm.info.requestName);",
+                  "} else {",
+                  "  pm.collectionVariables.set('tries', 0);",
+                  "  pm.test('reached the expected state within 45 seconds', () => pm.expect(ready).to.be.true);",
+                  "  pm.test('status is ACTIVE', () => pm.expect(b.status).to.eql('ACTIVE'));",
+                  "  pm.test('reasonCode is null', () => pm.expect(b.reasonCode).to.eql(null));",
+                  "  pm.test('sendNotification FAILED', () => pm.expect(step('sendNotification').state).to.eql('FAILED'));",
+                  "  pm.test('nothing compensated', () => pm.expect((b.steps || []).filter((s) => s.state === 'COMPENSATED').length).to.eql(0));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests/{{run}}-tc12"
+          }
+        }
+      ]
+    },
+    {
+      "name": "3 Milestone 3",
+      "description": "Signals, timers, updates, parking, cancellation, reissue, reconciliation and schedules. The confirmation timer is 10 seconds.",
+      "item": [
+        {
+          "name": "M3-02 Reset mocks",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{mockUrl}}/mock-admin/reset"
+          }
+        },
+        {
+          "name": "M3-02 Processor callbacks arrive late",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{mockUrl}}/mock-admin/callbacks/{{tenant}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"mode\": \"DELAY\",\n  \"delayMs\": 15000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "M3-02 Create card",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{run}}-m3-02"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cardType\": \"VIRTUAL\",\n  \"productCode\": \"VIRTUAL_STANDARD\",\n  \"customerRef\": \"customer-1\",\n  \"accountRef\": \"account-1\",\n  \"spendLimitMinor\": 50000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "M3-02 Parked after the timer fires",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (Number(pm.collectionVariables.get('tries') || 0) > 0) {",
+                  "  setTimeout(() => {}, 1000);",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const next = (n) => (pm.execution && pm.execution.setNextRequest) ? pm.execution.setNextRequest(n) : postman.setNextRequest(n);",
+                  "const code = pm.response.code;",
+                  "let b = {};",
+                  "try { b = pm.response.json(); } catch (e) { }",
+                  "const step = (n) => (b.steps || []).find((s) => s.name === n) || {};",
+                  "const tries = Number(pm.collectionVariables.get('tries') || 0);",
+                  "const ready = code === 200 && b.pendingReview != null;",
+                  "if (!ready && tries < 45) {",
+                  "  pm.collectionVariables.set('tries', tries + 1);",
+                  "  next(pm.info.requestName);",
+                  "} else {",
+                  "  pm.collectionVariables.set('tries', 0);",
+                  "  pm.test('reached the expected state within 45 seconds', () => pm.expect(ready).to.be.true);",
+                  "  pm.test('status is UNDER_REVIEW', () => pm.expect(b.status).to.eql('UNDER_REVIEW'));",
+                  "  pm.test('pending review is CONFIRMATION_TIMEOUT', () => pm.expect(b.pendingReview.kind).to.eql('CONFIRMATION_TIMEOUT'));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests/{{run}}-m3-02"
+          }
+        },
+        {
+          "name": "M3-02 Late callback clears it",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (Number(pm.collectionVariables.get('tries') || 0) > 0) {",
+                  "  setTimeout(() => {}, 1000);",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const next = (n) => (pm.execution && pm.execution.setNextRequest) ? pm.execution.setNextRequest(n) : postman.setNextRequest(n);",
+                  "const code = pm.response.code;",
+                  "let b = {};",
+                  "try { b = pm.response.json(); } catch (e) { }",
+                  "const step = (n) => (b.steps || []).find((s) => s.name === n) || {};",
+                  "const tries = Number(pm.collectionVariables.get('tries') || 0);",
+                  "const ready = code === 200 && b.finished === true;",
+                  "if (!ready && tries < 45) {",
+                  "  pm.collectionVariables.set('tries', tries + 1);",
+                  "  next(pm.info.requestName);",
+                  "} else {",
+                  "  pm.collectionVariables.set('tries', 0);",
+                  "  pm.test('reached the expected state within 45 seconds', () => pm.expect(ready).to.be.true);",
+                  "  pm.test('status is ACTIVE', () => pm.expect(b.status).to.eql('ACTIVE'));",
+                  "  pm.test('reasonCode is null', () => pm.expect(b.reasonCode).to.eql(null));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests/{{run}}-m3-02"
+          }
+        },
+        {
+          "name": "M3-03 Reset mocks",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{mockUrl}}/mock-admin/reset"
+          }
+        },
+        {
+          "name": "M3-03 Processor never calls back",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{mockUrl}}/mock-admin/callbacks/{{tenant}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"mode\": \"NEVER\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "M3-03 Create card",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{run}}-m3-03"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cardType\": \"VIRTUAL\",\n  \"productCode\": \"VIRTUAL_STANDARD\",\n  \"customerRef\": \"customer-1\",\n  \"accountRef\": \"account-1\",\n  \"spendLimitMinor\": 50000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "M3-03 Parked",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (Number(pm.collectionVariables.get('tries') || 0) > 0) {",
+                  "  setTimeout(() => {}, 1000);",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const next = (n) => (pm.execution && pm.execution.setNextRequest) ? pm.execution.setNextRequest(n) : postman.setNextRequest(n);",
+                  "const code = pm.response.code;",
+                  "let b = {};",
+                  "try { b = pm.response.json(); } catch (e) { }",
+                  "const step = (n) => (b.steps || []).find((s) => s.name === n) || {};",
+                  "const tries = Number(pm.collectionVariables.get('tries') || 0);",
+                  "const ready = code === 200 && b.pendingReview != null;",
+                  "if (!ready && tries < 45) {",
+                  "  pm.collectionVariables.set('tries', tries + 1);",
+                  "  next(pm.info.requestName);",
+                  "} else {",
+                  "  pm.collectionVariables.set('tries', 0);",
+                  "  pm.test('reached the expected state within 45 seconds', () => pm.expect(ready).to.be.true);",
+                  "  pm.test('status is UNDER_REVIEW', () => pm.expect(b.status).to.eql('UNDER_REVIEW'));",
+                  "  pm.test('pending review is CONFIRMATION_TIMEOUT', () => pm.expect(b.pendingReview.kind).to.eql('CONFIRMATION_TIMEOUT'));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests/{{run}}-m3-03"
+          }
+        },
+        {
+          "name": "M3-03 Wrong action is refused",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 409', () => pm.response.to.have.status(409));",
+                  "pm.test('code is ACTION_NOT_ALLOWED', () => pm.expect(pm.response.json().code).to.eql('ACTION_NOT_ALLOWED'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests/{{run}}-m3-03/approvals",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"RETRY\",\n  \"reviewer\": \"ops-1\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "M3-03 Operator approves",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('approved', () => pm.expect(pm.response.json().action).to.eql('APPROVE'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{run}}-m3-03-decision"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests/{{run}}-m3-03/approvals",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"APPROVE\",\n  \"reviewer\": \"ops-1\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "M3-03 Retried approval returns the same result",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('same result', () => pm.expect(pm.response.json().action).to.eql('APPROVE'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{run}}-m3-03-decision"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests/{{run}}-m3-03/approvals",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"APPROVE\",\n  \"reviewer\": \"ops-1\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "M3-03 Progress",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (Number(pm.collectionVariables.get('tries') || 0) > 0) {",
+                  "  setTimeout(() => {}, 1000);",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const next = (n) => (pm.execution && pm.execution.setNextRequest) ? pm.execution.setNextRequest(n) : postman.setNextRequest(n);",
+                  "const code = pm.response.code;",
+                  "let b = {};",
+                  "try { b = pm.response.json(); } catch (e) { }",
+                  "const step = (n) => (b.steps || []).find((s) => s.name === n) || {};",
+                  "const tries = Number(pm.collectionVariables.get('tries') || 0);",
+                  "const ready = code === 200 && b.finished === true;",
+                  "if (!ready && tries < 45) {",
+                  "  pm.collectionVariables.set('tries', tries + 1);",
+                  "  next(pm.info.requestName);",
+                  "} else {",
+                  "  pm.collectionVariables.set('tries', 0);",
+                  "  pm.test('reached the expected state within 45 seconds', () => pm.expect(ready).to.be.true);",
+                  "  pm.test('status is ACTIVE', () => pm.expect(b.status).to.eql('ACTIVE'));",
+                  "  pm.test('reasonCode is null', () => pm.expect(b.reasonCode).to.eql(null));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests/{{run}}-m3-03"
+          }
+        },
+        {
+          "name": "M3-04 Reset mocks",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{mockUrl}}/mock-admin/reset"
+          }
+        },
+        {
+          "name": "M3-04 Processor never calls back",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{mockUrl}}/mock-admin/callbacks/{{tenant}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"mode\": \"NEVER\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "M3-04 Create card",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{run}}-m3-04"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cardType\": \"VIRTUAL\",\n  \"productCode\": \"VIRTUAL_STANDARD\",\n  \"customerRef\": \"customer-1\",\n  \"accountRef\": \"account-1\",\n  \"spendLimitMinor\": 50000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "M3-04 Parked",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (Number(pm.collectionVariables.get('tries') || 0) > 0) {",
+                  "  setTimeout(() => {}, 1000);",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const next = (n) => (pm.execution && pm.execution.setNextRequest) ? pm.execution.setNextRequest(n) : postman.setNextRequest(n);",
+                  "const code = pm.response.code;",
+                  "let b = {};",
+                  "try { b = pm.response.json(); } catch (e) { }",
+                  "const step = (n) => (b.steps || []).find((s) => s.name === n) || {};",
+                  "const tries = Number(pm.collectionVariables.get('tries') || 0);",
+                  "const ready = code === 200 && b.pendingReview != null;",
+                  "if (!ready && tries < 45) {",
+                  "  pm.collectionVariables.set('tries', tries + 1);",
+                  "  next(pm.info.requestName);",
+                  "} else {",
+                  "  pm.collectionVariables.set('tries', 0);",
+                  "  pm.test('reached the expected state within 45 seconds', () => pm.expect(ready).to.be.true);",
+                  "  pm.test('status is UNDER_REVIEW', () => pm.expect(b.status).to.eql('UNDER_REVIEW'));",
+                  "  pm.test('pending review is CONFIRMATION_TIMEOUT', () => pm.expect(b.pendingReview.kind).to.eql('CONFIRMATION_TIMEOUT'));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests/{{run}}-m3-04"
+          }
+        },
+        {
+          "name": "M3-04 Operator rejects",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests/{{run}}-m3-04/approvals",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"REJECT\",\n  \"reviewer\": \"ops-1\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "M3-04 Progress",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (Number(pm.collectionVariables.get('tries') || 0) > 0) {",
+                  "  setTimeout(() => {}, 1000);",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const next = (n) => (pm.execution && pm.execution.setNextRequest) ? pm.execution.setNextRequest(n) : postman.setNextRequest(n);",
+                  "const code = pm.response.code;",
+                  "let b = {};",
+                  "try { b = pm.response.json(); } catch (e) { }",
+                  "const step = (n) => (b.steps || []).find((s) => s.name === n) || {};",
+                  "const tries = Number(pm.collectionVariables.get('tries') || 0);",
+                  "const ready = code === 200 && b.finished === true;",
+                  "if (!ready && tries < 45) {",
+                  "  pm.collectionVariables.set('tries', tries + 1);",
+                  "  next(pm.info.requestName);",
+                  "} else {",
+                  "  pm.collectionVariables.set('tries', 0);",
+                  "  pm.test('reached the expected state within 45 seconds', () => pm.expect(ready).to.be.true);",
+                  "  pm.test('status is REJECTED', () => pm.expect(b.status).to.eql('REJECTED'));",
+                  "  pm.test('reasonCode is REJECTED_BY_REVIEWER', () => pm.expect(b.reasonCode).to.eql('REJECTED_BY_REVIEWER'));",
+                  "  pm.test('cancelCard COMPENSATED', () => pm.expect(step('cancelCard').state).to.eql('COMPENSATED'));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests/{{run}}-m3-04"
+          }
+        },
+        {
+          "name": "M3-05 Reset mocks",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{mockUrl}}/mock-admin/reset"
+          }
+        },
+        {
+          "name": "M3-05 Create, KYC needs review",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{run}}-m3-05"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cardType\": \"VIRTUAL\",\n  \"productCode\": \"VIRTUAL_STANDARD\",\n  \"customerRef\": \"review-2\",\n  \"accountRef\": \"account-1\",\n  \"spendLimitMinor\": 50000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "M3-05 Parked for KYC review",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (Number(pm.collectionVariables.get('tries') || 0) > 0) {",
+                  "  setTimeout(() => {}, 1000);",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const next = (n) => (pm.execution && pm.execution.setNextRequest) ? pm.execution.setNextRequest(n) : postman.setNextRequest(n);",
+                  "const code = pm.response.code;",
+                  "let b = {};",
+                  "try { b = pm.response.json(); } catch (e) { }",
+                  "const step = (n) => (b.steps || []).find((s) => s.name === n) || {};",
+                  "const tries = Number(pm.collectionVariables.get('tries') || 0);",
+                  "const ready = code === 200 && b.pendingReview != null;",
+                  "if (!ready && tries < 45) {",
+                  "  pm.collectionVariables.set('tries', tries + 1);",
+                  "  next(pm.info.requestName);",
+                  "} else {",
+                  "  pm.collectionVariables.set('tries', 0);",
+                  "  pm.test('reached the expected state within 45 seconds', () => pm.expect(ready).to.be.true);",
+                  "  pm.test('status is UNDER_REVIEW', () => pm.expect(b.status).to.eql('UNDER_REVIEW'));",
+                  "  pm.test('pending review is KYC_REVIEW', () => pm.expect(b.pendingReview.kind).to.eql('KYC_REVIEW'));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests/{{run}}-m3-05"
+          }
+        },
+        {
+          "name": "M3-05 Reviewer approves",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests/{{run}}-m3-05/approvals",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"APPROVE\",\n  \"reviewer\": \"ops-1\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "M3-05 Progress",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (Number(pm.collectionVariables.get('tries') || 0) > 0) {",
+                  "  setTimeout(() => {}, 1000);",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const next = (n) => (pm.execution && pm.execution.setNextRequest) ? pm.execution.setNextRequest(n) : postman.setNextRequest(n);",
+                  "const code = pm.response.code;",
+                  "let b = {};",
+                  "try { b = pm.response.json(); } catch (e) { }",
+                  "const step = (n) => (b.steps || []).find((s) => s.name === n) || {};",
+                  "const tries = Number(pm.collectionVariables.get('tries') || 0);",
+                  "const ready = code === 200 && b.finished === true;",
+                  "if (!ready && tries < 45) {",
+                  "  pm.collectionVariables.set('tries', tries + 1);",
+                  "  next(pm.info.requestName);",
+                  "} else {",
+                  "  pm.collectionVariables.set('tries', 0);",
+                  "  pm.test('reached the expected state within 45 seconds', () => pm.expect(ready).to.be.true);",
+                  "  pm.test('status is ACTIVE', () => pm.expect(b.status).to.eql('ACTIVE'));",
+                  "  pm.test('reasonCode is null', () => pm.expect(b.reasonCode).to.eql(null));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests/{{run}}-m3-05"
+          }
+        },
+        {
+          "name": "M3-06 Reset mocks",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{mockUrl}}/mock-admin/reset"
+          }
+        },
+        {
+          "name": "M3-06 Processor offline for bank A",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{mockUrl}}/mock-admin/failures/{{tenant}}/processor/createCard",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"mode\": \"OFFLINE\",\n  \"times\": -1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "M3-06 Create card (bank A)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{run}}-m3-06"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cardType\": \"VIRTUAL\",\n  \"productCode\": \"VIRTUAL_STANDARD\",\n  \"customerRef\": \"customer-1\",\n  \"accountRef\": \"account-1\",\n  \"spendLimitMinor\": 50000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "M3-07 Create card (bank A)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{run}}-m3-07"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cardType\": \"VIRTUAL\",\n  \"productCode\": \"VIRTUAL_STANDARD\",\n  \"customerRef\": \"customer-1\",\n  \"accountRef\": \"account-1\",\n  \"spendLimitMinor\": 50000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "M3-06 Create card (bank B)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{otherTenant}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{run}}-m3-06b"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cardType\": \"VIRTUAL\",\n  \"productCode\": \"VIRTUAL_STANDARD\",\n  \"customerRef\": \"customer-1\",\n  \"accountRef\": \"account-1\",\n  \"spendLimitMinor\": 50000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "M3-06 Bank B unaffected",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (Number(pm.collectionVariables.get('tries') || 0) > 0) {",
+                  "  setTimeout(() => {}, 1000);",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const next = (n) => (pm.execution && pm.execution.setNextRequest) ? pm.execution.setNextRequest(n) : postman.setNextRequest(n);",
+                  "const code = pm.response.code;",
+                  "let b = {};",
+                  "try { b = pm.response.json(); } catch (e) { }",
+                  "const step = (n) => (b.steps || []).find((s) => s.name === n) || {};",
+                  "const tries = Number(pm.collectionVariables.get('tries') || 0);",
+                  "const ready = code === 200 && b.finished === true;",
+                  "if (!ready && tries < 45) {",
+                  "  pm.collectionVariables.set('tries', tries + 1);",
+                  "  next(pm.info.requestName);",
+                  "} else {",
+                  "  pm.collectionVariables.set('tries', 0);",
+                  "  pm.test('reached the expected state within 45 seconds', () => pm.expect(ready).to.be.true);",
+                  "  pm.test('status is ACTIVE', () => pm.expect(b.status).to.eql('ACTIVE'));",
+                  "  pm.test('reasonCode is null', () => pm.expect(b.reasonCode).to.eql(null));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{otherTenant}}"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests/{{run}}-m3-06b"
+          }
+        },
+        {
+          "name": "M3-06 Bank A parked after retries run out (about 30 s)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (Number(pm.collectionVariables.get('tries') || 0) > 0) {",
+                  "  setTimeout(() => {}, 1000);",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const next = (n) => (pm.execution && pm.execution.setNextRequest) ? pm.execution.setNextRequest(n) : postman.setNextRequest(n);",
+                  "const code = pm.response.code;",
+                  "let b = {};",
+                  "try { b = pm.response.json(); } catch (e) { }",
+                  "const step = (n) => (b.steps || []).find((s) => s.name === n) || {};",
+                  "const tries = Number(pm.collectionVariables.get('tries') || 0);",
+                  "const ready = code === 200 && b.pendingReview != null;",
+                  "if (!ready && tries < 75) {",
+                  "  pm.collectionVariables.set('tries', tries + 1);",
+                  "  next(pm.info.requestName);",
+                  "} else {",
+                  "  pm.collectionVariables.set('tries', 0);",
+                  "  pm.test('reached the expected state within 75 seconds', () => pm.expect(ready).to.be.true);",
+                  "  pm.test('status is UNDER_REVIEW', () => pm.expect(b.status).to.eql('UNDER_REVIEW'));",
+                  "  pm.test('pending review is RETRIES_EXHAUSTED', () => pm.expect(b.pendingReview.kind).to.eql('RETRIES_EXHAUSTED'));",
+                  "  pm.test('parked at createCard', () => pm.expect(b.pendingReview.step).to.eql('createCard'));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests/{{run}}-m3-06"
+          }
+        },
+        {
+          "name": "M3-06 Processor back online",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{mockUrl}}/mock-admin/failures/{{tenant}}/processor/createCard",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"mode\": \"OFFLINE\",\n  \"times\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "M3-06 Operator retries",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests/{{run}}-m3-06/approvals",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"RETRY\",\n  \"reviewer\": \"ops-1\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "M3-06 Progress",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (Number(pm.collectionVariables.get('tries') || 0) > 0) {",
+                  "  setTimeout(() => {}, 1000);",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const next = (n) => (pm.execution && pm.execution.setNextRequest) ? pm.execution.setNextRequest(n) : postman.setNextRequest(n);",
+                  "const code = pm.response.code;",
+                  "let b = {};",
+                  "try { b = pm.response.json(); } catch (e) { }",
+                  "const step = (n) => (b.steps || []).find((s) => s.name === n) || {};",
+                  "const tries = Number(pm.collectionVariables.get('tries') || 0);",
+                  "const ready = code === 200 && b.finished === true;",
+                  "if (!ready && tries < 45) {",
+                  "  pm.collectionVariables.set('tries', tries + 1);",
+                  "  next(pm.info.requestName);",
+                  "} else {",
+                  "  pm.collectionVariables.set('tries', 0);",
+                  "  pm.test('reached the expected state within 45 seconds', () => pm.expect(ready).to.be.true);",
+                  "  pm.test('status is ACTIVE', () => pm.expect(b.status).to.eql('ACTIVE'));",
+                  "  pm.test('reasonCode is null', () => pm.expect(b.reasonCode).to.eql(null));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests/{{run}}-m3-06"
+          }
+        },
+        {
+          "name": "M3-07 Parked",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (Number(pm.collectionVariables.get('tries') || 0) > 0) {",
+                  "  setTimeout(() => {}, 1000);",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const next = (n) => (pm.execution && pm.execution.setNextRequest) ? pm.execution.setNextRequest(n) : postman.setNextRequest(n);",
+                  "const code = pm.response.code;",
+                  "let b = {};",
+                  "try { b = pm.response.json(); } catch (e) { }",
+                  "const step = (n) => (b.steps || []).find((s) => s.name === n) || {};",
+                  "const tries = Number(pm.collectionVariables.get('tries') || 0);",
+                  "const ready = code === 200 && b.pendingReview != null;",
+                  "if (!ready && tries < 75) {",
+                  "  pm.collectionVariables.set('tries', tries + 1);",
+                  "  next(pm.info.requestName);",
+                  "} else {",
+                  "  pm.collectionVariables.set('tries', 0);",
+                  "  pm.test('reached the expected state within 75 seconds', () => pm.expect(ready).to.be.true);",
+                  "  pm.test('status is UNDER_REVIEW', () => pm.expect(b.status).to.eql('UNDER_REVIEW'));",
+                  "  pm.test('pending review is RETRIES_EXHAUSTED', () => pm.expect(b.pendingReview.kind).to.eql('RETRIES_EXHAUSTED'));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests/{{run}}-m3-07"
+          }
+        },
+        {
+          "name": "M3-07 Operator cancels",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests/{{run}}-m3-07/approvals",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"CANCEL\",\n  \"reviewer\": \"ops-1\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "M3-07 Progress",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (Number(pm.collectionVariables.get('tries') || 0) > 0) {",
+                  "  setTimeout(() => {}, 1000);",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const next = (n) => (pm.execution && pm.execution.setNextRequest) ? pm.execution.setNextRequest(n) : postman.setNextRequest(n);",
+                  "const code = pm.response.code;",
+                  "let b = {};",
+                  "try { b = pm.response.json(); } catch (e) { }",
+                  "const step = (n) => (b.steps || []).find((s) => s.name === n) || {};",
+                  "const tries = Number(pm.collectionVariables.get('tries') || 0);",
+                  "const ready = code === 200 && b.finished === true;",
+                  "if (!ready && tries < 45) {",
+                  "  pm.collectionVariables.set('tries', tries + 1);",
+                  "  next(pm.info.requestName);",
+                  "} else {",
+                  "  pm.collectionVariables.set('tries', 0);",
+                  "  pm.test('reached the expected state within 45 seconds', () => pm.expect(ready).to.be.true);",
+                  "  pm.test('status is CANCELLED', () => pm.expect(b.status).to.eql('CANCELLED'));",
+                  "  pm.test('reasonCode is CANCELLED_BY_OPERATOR', () => pm.expect(b.reasonCode).to.eql('CANCELLED_BY_OPERATOR'));",
+                  "  pm.test('cancelCard COMPENSATED', () => pm.expect(step('cancelCard').state).to.eql('COMPENSATED'));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests/{{run}}-m3-07"
+          }
+        },
+        {
+          "name": "M3-08 Reset mocks",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{mockUrl}}/mock-admin/reset"
+          }
+        },
+        {
+          "name": "M3-08 Processor never calls back",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{mockUrl}}/mock-admin/callbacks/{{tenant}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"mode\": \"NEVER\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "M3-08 Create card",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{run}}-m3-08"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cardType\": \"VIRTUAL\",\n  \"productCode\": \"VIRTUAL_STANDARD\",\n  \"customerRef\": \"customer-1\",\n  \"accountRef\": \"account-1\",\n  \"spendLimitMinor\": 50000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "M3-08 Waiting for callback",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (Number(pm.collectionVariables.get('tries') || 0) > 0) {",
+                  "  setTimeout(() => {}, 1000);",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const next = (n) => (pm.execution && pm.execution.setNextRequest) ? pm.execution.setNextRequest(n) : postman.setNextRequest(n);",
+                  "const code = pm.response.code;",
+                  "let b = {};",
+                  "try { b = pm.response.json(); } catch (e) { }",
+                  "const step = (n) => (b.steps || []).find((s) => s.name === n) || {};",
+                  "const tries = Number(pm.collectionVariables.get('tries') || 0);",
+                  "const ready = code === 200 && step('awaitConfirmation').state === 'WAITING';",
+                  "if (!ready && tries < 45) {",
+                  "  pm.collectionVariables.set('tries', tries + 1);",
+                  "  next(pm.info.requestName);",
+                  "} else {",
+                  "  pm.collectionVariables.set('tries', 0);",
+                  "  pm.test('reached the expected state within 45 seconds', () => pm.expect(ready).to.be.true);",
+                  "  pm.test('awaitConfirmation WAITING', () => pm.expect(step('awaitConfirmation').state).to.eql('WAITING'));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests/{{run}}-m3-08"
+          }
+        },
+        {
+          "name": "M3-08 Cancel",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('accepted', () => pm.expect(pm.response.json().accepted).to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests/{{run}}-m3-08/cancel",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"customer-request\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "M3-08 Progress",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (Number(pm.collectionVariables.get('tries') || 0) > 0) {",
+                  "  setTimeout(() => {}, 1000);",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const next = (n) => (pm.execution && pm.execution.setNextRequest) ? pm.execution.setNextRequest(n) : postman.setNextRequest(n);",
+                  "const code = pm.response.code;",
+                  "let b = {};",
+                  "try { b = pm.response.json(); } catch (e) { }",
+                  "const step = (n) => (b.steps || []).find((s) => s.name === n) || {};",
+                  "const tries = Number(pm.collectionVariables.get('tries') || 0);",
+                  "const ready = code === 200 && b.finished === true;",
+                  "if (!ready && tries < 45) {",
+                  "  pm.collectionVariables.set('tries', tries + 1);",
+                  "  next(pm.info.requestName);",
+                  "} else {",
+                  "  pm.collectionVariables.set('tries', 0);",
+                  "  pm.test('reached the expected state within 45 seconds', () => pm.expect(ready).to.be.true);",
+                  "  pm.test('status is CANCELLED', () => pm.expect(b.status).to.eql('CANCELLED'));",
+                  "  pm.test('reasonCode is CANCELLED_BY_REQUEST', () => pm.expect(b.reasonCode).to.eql('CANCELLED_BY_REQUEST'));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests/{{run}}-m3-08"
+          }
+        },
+        {
+          "name": "M3-08 Card cancelled",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const cards = pm.response.json();",
+                  "pm.test('card CANCELLED', () => pm.expect(cards[0].status).to.eql('CANCELLED'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{mockUrl}}/mock-admin/cards/{{tenant}}"
+          }
+        },
+        {
+          "name": "M3-09 Card number in a cancel reason is refused",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('code is INVALID_REQUEST', () => pm.expect(pm.response.json().code).to.eql('INVALID_REQUEST'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests/{{run}}-tc01/cancel",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"card 4111 1111 1111 1111 lost\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "M3-09 Cancel a finished card is refused",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 409', () => pm.response.to.have.status(409));",
+                  "pm.test('code is ALREADY_FINISHED', () => pm.expect(pm.response.json().code).to.eql('ALREADY_FINISHED'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests/{{run}}-tc01/cancel",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"customer-request\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "M3-09 Review a finished card is refused",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 409', () => pm.response.to.have.status(409));",
+                  "pm.test('code is ALREADY_FINISHED', () => pm.expect(pm.response.json().code).to.eql('ALREADY_FINISHED'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests/{{run}}-tc01/approvals",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"APPROVE\",\n  \"reviewer\": \"ops-1\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "M3-10 Reset mocks",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{mockUrl}}/mock-admin/reset"
+          }
+        },
+        {
+          "name": "M3-10 Create the card to replace",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{run}}-m3-10"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cardType\": \"VIRTUAL\",\n  \"productCode\": \"VIRTUAL_STANDARD\",\n  \"customerRef\": \"customer-1\",\n  \"accountRef\": \"account-1\",\n  \"spendLimitMinor\": 50000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "M3-10 Card active",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (Number(pm.collectionVariables.get('tries') || 0) > 0) {",
+                  "  setTimeout(() => {}, 1000);",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const next = (n) => (pm.execution && pm.execution.setNextRequest) ? pm.execution.setNextRequest(n) : postman.setNextRequest(n);",
+                  "const code = pm.response.code;",
+                  "let b = {};",
+                  "try { b = pm.response.json(); } catch (e) { }",
+                  "const step = (n) => (b.steps || []).find((s) => s.name === n) || {};",
+                  "const tries = Number(pm.collectionVariables.get('tries') || 0);",
+                  "const ready = code === 200 && b.finished === true;",
+                  "if (!ready && tries < 45) {",
+                  "  pm.collectionVariables.set('tries', tries + 1);",
+                  "  next(pm.info.requestName);",
+                  "} else {",
+                  "  pm.collectionVariables.set('tries', 0);",
+                  "  pm.test('reached the expected state within 45 seconds', () => pm.expect(ready).to.be.true);",
+                  "  pm.test('status is ACTIVE', () => pm.expect(b.status).to.eql('ACTIVE'));",
+                  "  pm.test('reasonCode is null', () => pm.expect(b.reasonCode).to.eql(null));",
+                  "  pm.collectionVariables.set('oldCardId', b.card ? b.card.cardId : '');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests/{{run}}-m3-10"
+          }
+        },
+        {
+          "name": "M3-10 Reissue as stolen",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));",
+                  "pm.test('replacement request named', () => pm.expect(pm.response.json().newCardRequestId).to.eql(pm.collectionVariables.get('run') + '-m3-10r-new'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{run}}-m3-10r"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/cards/{{oldCardId}}/reissue",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"STOLEN\",\n  \"productCode\": \"VIRTUAL_STANDARD\",\n  \"customerRef\": \"customer-1\",\n  \"accountRef\": \"account-1\",\n  \"spendLimitMinor\": 50000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "M3-10 Reissue progress",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (Number(pm.collectionVariables.get('tries') || 0) > 0) {",
+                  "  setTimeout(() => {}, 1000);",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const next = (n) => (pm.execution && pm.execution.setNextRequest) ? pm.execution.setNextRequest(n) : postman.setNextRequest(n);",
+                  "const code = pm.response.code;",
+                  "let b = {};",
+                  "try { b = pm.response.json(); } catch (e) { }",
+                  "const step = (n) => (b.steps || []).find((s) => s.name === n) || {};",
+                  "const tries = Number(pm.collectionVariables.get('tries') || 0);",
+                  "const ready = code === 200 && b.finished === true;",
+                  "if (!ready && tries < 45) {",
+                  "  pm.collectionVariables.set('tries', tries + 1);",
+                  "  next(pm.info.requestName);",
+                  "} else {",
+                  "  pm.collectionVariables.set('tries', 0);",
+                  "  pm.test('reached the expected state within 45 seconds', () => pm.expect(ready).to.be.true);",
+                  "  pm.test('status is ACTIVE', () => pm.expect(b.status).to.eql('ACTIVE'));",
+                  "  pm.test('reasonCode is null', () => pm.expect(b.reasonCode).to.eql(null));",
+                  "  ['blockOldCard', 'issueNewCard', 'linkCards'].forEach((s) => pm.test(s + ' DONE', () => pm.expect(step(s).state).to.eql('DONE')));",
+                  "  pm.collectionVariables.set('newCardId', b.card ? b.card.cardId : '');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/reissues/{{run}}-m3-10r"
+          }
+        },
+        {
+          "name": "M3-10 Old card blocked and linked",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const cards = pm.response.json();",
+                  "",
+                  "const oldCard = cards.find((c) => c.cardId === pm.collectionVariables.get('oldCardId'));",
+                  "const newCard = cards.find((c) => c.cardId === pm.collectionVariables.get('newCardId'));",
+                  "pm.test('old card BLOCKED', () => pm.expect(oldCard.status).to.eql('BLOCKED'));",
+                  "pm.test('old card linked to new', () => pm.expect(oldCard.replacedBy).to.eql(pm.collectionVariables.get('newCardId')));",
+                  "pm.test('new card ACTIVE', () => pm.expect(newCard.status).to.eql('ACTIVE'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{mockUrl}}/mock-admin/cards/{{tenant}}"
+          }
+        },
+        {
+          "name": "M3-11 Reissue an unknown card",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{run}}-m3-11"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/cards/card_NOSUCHCARD/reissue",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"LOST\",\n  \"productCode\": \"VIRTUAL_STANDARD\",\n  \"customerRef\": \"customer-1\",\n  \"accountRef\": \"account-1\",\n  \"spendLimitMinor\": 50000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "M3-11 Reissue progress",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (Number(pm.collectionVariables.get('tries') || 0) > 0) {",
+                  "  setTimeout(() => {}, 1000);",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const next = (n) => (pm.execution && pm.execution.setNextRequest) ? pm.execution.setNextRequest(n) : postman.setNextRequest(n);",
+                  "const code = pm.response.code;",
+                  "let b = {};",
+                  "try { b = pm.response.json(); } catch (e) { }",
+                  "const step = (n) => (b.steps || []).find((s) => s.name === n) || {};",
+                  "const tries = Number(pm.collectionVariables.get('tries') || 0);",
+                  "const ready = code === 200 && b.finished === true;",
+                  "if (!ready && tries < 45) {",
+                  "  pm.collectionVariables.set('tries', tries + 1);",
+                  "  next(pm.info.requestName);",
+                  "} else {",
+                  "  pm.collectionVariables.set('tries', 0);",
+                  "  pm.test('reached the expected state within 45 seconds', () => pm.expect(ready).to.be.true);",
+                  "  pm.test('status is REJECTED', () => pm.expect(b.status).to.eql('REJECTED'));",
+                  "  pm.test('reasonCode is CARD_NOT_FOUND', () => pm.expect(b.reasonCode).to.eql('CARD_NOT_FOUND'));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/reissues/{{run}}-m3-11"
+          }
+        },
+        {
+          "name": "M3-12 Reset mocks",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{mockUrl}}/mock-admin/reset"
+          }
+        },
+        {
+          "name": "M3-12 Processor card the platform never issued",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('orphanCardId', pm.response.json().cardId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{mockUrl}}/mock-admin/cards/{{tenant}}/orphan"
+          }
+        },
+        {
+          "name": "M3-12 Start reconciliation",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{run}}-m3-12"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/reconciliations",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"pageSize\": 50\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "M3-12 Reconciliation report",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (Number(pm.collectionVariables.get('tries') || 0) > 0) {",
+                  "  setTimeout(() => {}, 1000);",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const next = (n) => (pm.execution && pm.execution.setNextRequest) ? pm.execution.setNextRequest(n) : postman.setNextRequest(n);",
+                  "const code = pm.response.code;",
+                  "let b = {};",
+                  "try { b = pm.response.json(); } catch (e) { }",
+                  "const step = (n) => (b.steps || []).find((s) => s.name === n) || {};",
+                  "const tries = Number(pm.collectionVariables.get('tries') || 0);",
+                  "const ready = code === 200 && b.status !== 'RUNNING';",
+                  "if (!ready && tries < 45) {",
+                  "  pm.collectionVariables.set('tries', tries + 1);",
+                  "  next(pm.info.requestName);",
+                  "} else {",
+                  "  pm.collectionVariables.set('tries', 0);",
+                  "  pm.test('reached the expected state within 45 seconds', () => pm.expect(ready).to.be.true);",
+                  "  pm.test('COMPLETED', () => pm.expect(b.status).to.eql('COMPLETED'));",
+                  "  const found = (b.report.discrepancies || []).find((d) => d.cardId === pm.collectionVariables.get('orphanCardId'));",
+                  "  pm.test('orphan reported as UNKNOWN_TO_PLATFORM', () => pm.expect(found && found.type).to.eql('UNKNOWN_TO_PLATFORM'));",
+                  "  pm.test('processor has 1 card', () => pm.expect(b.report.processorCards).to.eql(1));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/reconciliations/{{run}}-m3-12"
+          }
+        },
+        {
+          "name": "M3-14 Trigger the nightly schedule",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 202', () => pm.response.to.have.status(202));",
+                  "pm.test('triggered', () => pm.expect(pm.response.json().result).to.eql('TRIGGERED'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/reconciliations/schedule/trigger"
+          }
+        }
+      ]
+    },
+    {
+      "name": "9 Manual (deselect in the Runner)",
+      "description": "These need you to stop and restart the worker, so run them one at a time with Send. Each request description says what to do.",
+      "item": [
+        {
+          "name": "Manual Reset mocks",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{mockUrl}}/mock-admin/reset"
+          }
+        },
+        {
+          "name": "tc15 Create card while the worker is stopped",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{run}}-tc15"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cardType\": \"VIRTUAL\",\n  \"productCode\": \"VIRTUAL_STANDARD\",\n  \"customerRef\": \"customer-1\",\n  \"accountRef\": \"account-1\",\n  \"spendLimitMinor\": 50000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "tc15 Progress",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('503 while the worker is down, or ACTIVE after restart', () => pm.expect([503, 200]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/card-requests/{{run}}-tc15",
+            "description": "Stop the worker (Ctrl+C) before \"Create card\". Send this: expect 503 PROGRESS_UNAVAILABLE. Restart the worker, wait a few seconds, send again: expect ACTIVE."
+          }
+        },
+        {
+          "name": "M3-13 Slow processor listing (1.5 s per page)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{mockUrl}}/mock-admin/failures/{{tenant}}/processor/listCards",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"mode\": \"LATENCY\",\n  \"times\": -1,\n  \"latencyMs\": 1500\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "M3-13 Orphan card 1",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{mockUrl}}/mock-admin/cards/{{tenant}}/orphan"
+          }
+        },
+        {
+          "name": "M3-13 Orphan card 2",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{mockUrl}}/mock-admin/cards/{{tenant}}/orphan"
+          }
+        },
+        {
+          "name": "M3-13 Orphan card 3",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{mockUrl}}/mock-admin/cards/{{tenant}}/orphan"
+          }
+        },
+        {
+          "name": "M3-13 Orphan card 4",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{mockUrl}}/mock-admin/cards/{{tenant}}/orphan"
+          }
+        },
+        {
+          "name": "M3-13 Orphan card 5",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{mockUrl}}/mock-admin/cards/{{tenant}}/orphan"
+          }
+        },
+        {
+          "name": "M3-13 Orphan card 6",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{mockUrl}}/mock-admin/cards/{{tenant}}/orphan"
+          }
+        },
+        {
+          "name": "M3-13 Start reconciliation, one card per page",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{run}}-m3-13"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/reconciliations",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"pageSize\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "About 5 seconds after sending, stop the worker (Ctrl+C), then start it again."
+          }
+        },
+        {
+          "name": "M3-13 Reconciliation report",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('COMPLETED with 6 processor cards', () => { pm.expect(b.status).to.eql('COMPLETED'); pm.expect(b.report.processorCards).to.eql(6); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenant}}"
+              }
+            ],
+            "url": "{{baseUrl}}/v1/reconciliations/{{run}}-m3-13",
+            "description": "Send until COMPLETED. Then in the Web UI, open reconcile-bank-a-<run>-m3-13: the Reconcile activity completed on attempt 2."
+          }
+        },
+        {
+          "name": "M3-13 Fewer than 12 page reads",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const n = pm.response.json();",
+                  "pm.test('resumed, not restarted', () => pm.expect(n.calls['processor/listCards']).to.be.below(12));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{mockUrl}}/mock-admin/counters/{{tenant}}"
+          }
+        }
+      ]
+    }
+  ]
+}

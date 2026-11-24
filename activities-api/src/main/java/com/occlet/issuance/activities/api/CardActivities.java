@@ -35,4 +35,10 @@ public interface CardActivities {
 
     @ActivityMethod
     void sendNotification(NotificationCommand command);
+
+    @ActivityMethod
+    void blockCard(CardCommand command);
+
+    @ActivityMethod
+    void linkReplacement(LinkCommand command);
 }
