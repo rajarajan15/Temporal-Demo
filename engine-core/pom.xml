@@ -11,6 +11,7 @@
   <artifactId>engine-core</artifactId>
   <dependencies>
     <dependency><groupId>com.occlet.issuance</groupId><artifactId>contracts</artifactId></dependency>
+    <dependency><groupId>io.temporal</groupId><artifactId>temporal-sdk</artifactId></dependency>
   </dependencies>
 
 </project>

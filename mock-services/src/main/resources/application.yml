@@ -1,0 +1,12 @@
+server:
+  # The mock admin API has no authentication, so it listens on loopback only.
+  address: 127.0.0.1
+  port: ${MOCK_PORT:8091}
+
+spring:
+  application:
+    name: mock-services
+
+mock:
+  # Must exceed the worker's HTTP timeout, so DROP_RESPONSE looks like a lost response.
+  drop-response-delay-ms: 4000

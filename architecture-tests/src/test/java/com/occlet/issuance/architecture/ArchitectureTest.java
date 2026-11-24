@@ -61,12 +61,12 @@ class ArchitectureTest {
 
     @ArchTest
     static final ArchRule workflowsAvoidNonDeterministicCalls = noClasses()
-            .that().resideInAPackage(WORKFLOWS)
+            .that().resideInAnyPackage(WORKFLOWS, ENGINE)
             .should().callMethodWhere(NON_DETERMINISTIC);
 
     @ArchTest
     static final ArchRule workflowsAvoidThreadsAndClocks = noClasses()
-            .that().resideInAPackage(WORKFLOWS)
+            .that().resideInAnyPackage(WORKFLOWS, ENGINE)
             .should().dependOnClassesThat(CONCURRENCY_OR_TIME_TYPE);
 
     @ArchTest
@@ -80,8 +80,26 @@ class ArchitectureTest {
             .that().resideInAPackage(PORTS)
             .should().dependOnClassesThat().resideInAnyPackage(
                     ENGINE, ROOT + "activities..", WORKFLOWS, ADAPTERS, MOCK, WORKER, API,
-                    "org.springframework..", "io.temporal..")
-            .allowEmptyShould(true);
+                    "org.springframework..", "io.temporal..");
+
+    @ArchTest
+    static final ArchRule engineStaysFreeOfIoAndOuterModules = noClasses()
+            .that().resideInAPackage(ENGINE)
+            .should().dependOnClassesThat().resideInAnyPackage(
+                    "org.springframework..", "java.sql..", "java.net..", "java.nio.file..",
+                    PORTS, ROOT + "activities..", WORKFLOWS, ADAPTERS, MOCK, WORKER, API);
+
+    @ArchTest
+    static final ArchRule adaptersDependOnlyOnPortsAndContracts = noClasses()
+            .that().resideInAPackage(ADAPTERS)
+            .should().dependOnClassesThat().resideInAnyPackage(
+                    ENGINE, ROOT + "activities..", WORKFLOWS, MOCK, WORKER, API, "io.temporal..");
+
+    @ArchTest
+    static final ArchRule mocksShareOnlyContracts = noClasses()
+            .that().resideInAPackage(MOCK)
+            .should().dependOnClassesThat().resideInAnyPackage(
+                    PORTS, ENGINE, ROOT + "activities..", WORKFLOWS, ADAPTERS, WORKER, API, "io.temporal..");
 
     @ArchTest
     static final ArchRule activityApiDependsOnlyOnContracts = noClasses()

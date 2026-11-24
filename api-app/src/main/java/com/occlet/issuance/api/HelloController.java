@@ -7,16 +7,13 @@ import io.temporal.api.enums.v1.WorkflowIdReusePolicy;
 import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowExecutionAlreadyStarted;
 import io.temporal.client.WorkflowOptions;
-import io.temporal.client.WorkflowServiceException;
 import io.temporal.client.WorkflowStub;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.regex.Pattern;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
@@ -62,12 +59,5 @@ class HelloController {
         } catch (TimeoutException stillRunning) {
             return ResponseEntity.accepted().body(Map.of("requestId", request.requestId(), "status", "IN_PROGRESS"));
         }
-    }
-
-    @ExceptionHandler(WorkflowServiceException.class)
-    ResponseEntity<Map<String, String>> temporalUnavailable() {
-        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
-                .header("Retry-After", "5")
-                .body(Map.of("code", "ENGINE_UNAVAILABLE"));
     }
 }

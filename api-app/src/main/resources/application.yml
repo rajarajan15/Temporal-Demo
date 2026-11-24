@@ -3,6 +3,7 @@ server:
 
 issuance:
   task-queue: ${TEMPORAL_TASK_QUEUE:issuance-dev}
+  tenants: bank-a,bank-b
 
 spring:
   application:
