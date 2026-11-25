@@ -4,10 +4,6 @@
 # Build output
 target/
 
-# Node
-node_modules/
-web/dist/
-
 # Local Temporal dev server database
 *.db
 *.db-shm
