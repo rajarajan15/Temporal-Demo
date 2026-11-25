@@ -439,7 +439,7 @@ Every Java package is `com.occlet.issuance.<module>`. Paths below are relative t
 |---|---|
 | [pom.xml](../pom.xml) | Parent build. Lists the 11 modules, pins Spring Boot 4.2.0, Temporal 1.41.1 and ArchUnit 1.5.1, sets Java release 25, turns on `-parameters` (Spring needs parameter names for `@PathVariable` and `@RequestHeader`), and makes the Boot plugin write an extra `*-exec.jar` so the plain jar stays usable as a library |
 | [mvnw](../mvnw), [mvnw.cmd](../mvnw.cmd), [.mvn/wrapper](../.mvn/wrapper) | Maven wrapper that downloads Maven 3.10.2 if you don't have it |
-| [.gitignore](../.gitignore) | Ignores `.tools/`, `target/`, `node_modules/`, the SQLite files and secrets |
+| [.gitignore](../.gitignore) | Ignores `.tools/`, `target/`, the SQLite files, IDE files and secrets |
 | `.tools/` (not in git) | Local toolchain: `jdk\jdk-25...`, `maven\apache-maven-3.10.2`, `temporal\temporal.exe`, and `temporal-dev.db`. Setup is in the [README](../README.md#setup) |
 | [README.md](../README.md) | Setup, run commands, Postman, operator actions, failure injection |
 | [docs/design-amendments.md](design-amendments.md) | Corrections A1 to A12 to the original design, temporary behaviours, and platform versions |

@@ -7,6 +7,7 @@ A reference implementation of card issuance on Temporal, using Java 25, Spring B
 | Document | Contents |
 |---|---|
 | [docs/architecture.md](docs/architecture.md) | Features, where data is stored, code flow, every file explained, edge cases, tests, and future work |
+| [docs/frontend-context.md](docs/frontend-context.md) | What a frontend needs: endpoints, request and response shapes, status values, polling, and API gaps |
 | [docs/design-amendments.md](docs/design-amendments.md) | Corrections to the original design, and platform versions |
 
 ## Features
